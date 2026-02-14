@@ -16,6 +16,12 @@
 
 bool GameRunning = true;
 
+enum class TimerState {
+	Idle,
+	Running,
+	Finished
+}
+
 struct Split
 {
 	std::string Name;
@@ -38,6 +44,7 @@ int main(int argc, char **argv)
 {
 	std::string fontPath = appInfo.ResLocation + "/fonts/manaspace/manaspc.ttf";
 	datapath = (std::string)getenv("HOME") + "/.config/SeedSplit";
+	TimerState state = TimerState::Idle;
 
 	/* Read the configuration file */
 	inipp::Ini<char> ini;
@@ -170,121 +177,165 @@ int main(int argc, char **argv)
 
 	while (GameRunning)
 	{
-
 		timeStep.Start();
+		
 		while (timeStep.Running())
 		{
-			while (SDL_PollEvent(&event) != 0)
-			{
-				window.EventTick(event, &GameRunning);
-				
-				/* Handle keypresses */
-				if (event.type == SDL_KEYDOWN)
-				{
-					/* Start timer */
-					if (!timer.running && event.key.keysym.scancode == 44)
-					{
-						/* Reset splits */
-						if (splitsEnabled)
-						{
-							currentSplit = 0;
-							for (int i = 0; i < splits.size(); i++)
-								splitTimeEntities[i].SetText("00:00");
-
-							/* Set color for the first split as selected */
-							splitNameEntities[0].SetColor(&currentSplitColor); /* Reset color */
-							splitTimeEntities[0].SetColor(&currentSplitColor); /* Reset color */
-						}
-
-						timer.Start();
-					}
-
-					/* Next split */
-					else if (timer.running && event.key.keysym.scancode == 44)
-					{
-						/* Save split data */
-						if (splitsEnabled)
-						{
-							splits[currentSplit].mills = timer.ElapsedMilliseconds();
-							if (currentSplit == 0)
-								splits[currentSplit].DigitalTime = timer.SplitDigitalFormat(0);
-							else
-								splits[currentSplit].DigitalTime = timer.SplitDigitalFormat(splits[currentSplit - 1].mills);
-
-							/* Update split time entity */
-							splitTimeEntities[currentSplit].SetText(splits[currentSplit].DigitalTime);
-
-							splitNameEntities[currentSplit].SetColor(&Birb::Colors::White); /* Reset color for split name */
-							splitTimeEntities[currentSplit].SetColor(&Birb::Colors::White); /* Reset color for split time */
-
-							currentSplit++;
-
-							if (currentSplit < splits.size())
-							{
-								splitNameEntities[currentSplit].SetColor(&currentSplitColor); /* Change color for new selected split name */
-								splitTimeEntities[currentSplit].SetColor(&currentSplitColor); /* Change color for new selected split time */
-							}
-						}
-
-						if (!splitsEnabled || currentSplit >= splits.size())
-							timer.Stop();
-					}
-				}
-			}
-
+			HandleEvents();
+			Update();
+			Render();
 			timeStep.Step();
 		}
 
-		timeStep.End();
-
-		/* Update the main timer text when if the elapsed milliseconds is divisible by 5
-		 * this is to slow down the texture spamming a bit. Update the text though if the timer 
-		 * has been stopped */
-		if ((int)timer.ElapsedMilliseconds() % 2 == 0 || !timer.running)
-		{
-			e_totalTime.SetText(timer.DigitalFormat());
-		}
-
-		/* Update split time positions relative to window dimensions */
-		if (splitsEnabled)
-		{
-			for (int i = 0; i < splits.size(); i++)
-			{
-				splitTimeEntities[i].rect.x = window.dimensions.x - 60 - splitSize;
-			}
-
-			/* Update split times */
-			if (timer.running && currentSplit < splits.size())
-			{
-				splits[currentSplit].DigitalTime = timer.SplitDigitalFormat(splits[currentSplit - 1].mills);
-				splitTimeEntities[currentSplit].SetText(splits[currentSplit].DigitalTime);
-			}
-		}
-
-		/* Render stuff */
-		window.Clear();
-		{
-			/* Draw the timer */
-			Birb::Render::DrawEntity(e_totalTime);
-
-			if (splitsEnabled)
-			{
-				/* Draw the divider line between main timer and splits */
-				Birb::Render::DrawRect(Birb::Colors::White, Birb::Rect(10, 12 + timerSize, window.dimensions.x - 20, 2));
-
-				/* Draw splits */
-				for (int i = 0; i < splits.size(); i++)
-				{
-					Birb::Render::DrawEntity(splitNameEntities[i]);
-					Birb::Render::DrawEntity(splitTimeEntities[i]);
-				}
-			}
-		}
-		window.Display();
-		/* End of rendering */
+		timeStep.End();	
 	}
-	timer.Stop();
 
 	Birb::Debug::Log("SeedSplit should be closed now!");
 	return 0;
+}
+
+void HandleEvents()
+{
+    SDL_Event event;
+    while (SDL_PollEvent(&event))
+    {
+        window.EventTick(event, &GameRunning);
+
+        if (event.type == SDL_KEYDOWN)
+        {
+            HandleKeyDown(event.key.keysym.scancode);
+        }
+    }
+}
+
+void HandleKeyDown(SDL_Scancode key)
+{
+	if (key != SDL_SCANCODE_SPACE)
+		return;
+
+    switch (state)
+    {
+        case TimerState::Idle:
+            StartRun();
+            break;
+
+        case TimerState::Running:
+            AdvanceSplitOrFinish();
+            break;
+
+        case TimerState::Finished:
+            ResetRun();
+            break;
+    }
+}
+
+void StartRun(){
+	if (splitsEnabled)
+	{
+		currentSplit = 0;
+		for (int i = 0; i < splits.size(); i++)
+			splitTimeEntities[i].SetText("00:00");
+
+		/* Set color for the first split as selected */
+		splitNameEntities[0].SetColor(&currentSplitColor); /* Reset color */
+		splitTimeEntities[0].SetColor(&currentSplitColor); /* Reset color */
+	}
+
+	state = TimerState::Running;
+	timer.Start();
+}
+
+void AdvanceSplitOrFinish(){
+	/* Save split data */
+	if (splitsEnabled)
+	{
+		splits[currentSplit].mills = timer.ElapsedMilliseconds();
+
+		if (currentSplit == 0)
+			splits[currentSplit].DigitalTime = timer.SplitDigitalFormat(0);
+		else
+			splits[currentSplit].DigitalTime = timer.SplitDigitalFormat(splits[currentSplit - 1].mills);
+
+		/* Update split time entity */
+		splitTimeEntities[currentSplit].SetText(splits[currentSplit].DigitalTime);
+
+		splitNameEntities[currentSplit].SetColor(&Birb::Colors::White); /* Reset color for split name */
+		splitTimeEntities[currentSplit].SetColor(&Birb::Colors::White); /* Reset color for split time */
+
+		currentSplit++;
+
+		if (currentSplit < splits.size())
+		{
+			splitNameEntities[currentSplit].SetColor(&currentSplitColor); /* Change color for new selected split name */
+			splitTimeEntities[currentSplit].SetColor(&currentSplitColor); /* Change color for new selected split time */
+		}
+
+		if (!splitsEnabled || currentSplit >= splits.size()){
+			timer.Stop();
+			state = TimerState::Finished;
+		}
+	}
+}
+
+//note, does nothing. needs a smarter head!
+void ResetRun(){
+	timer.Reset();
+	state = TimerState:Idle;
+}
+
+void Update(){
+	UpdateMainTimerText();
+    UpdateSplitPositions();
+    UpdateLiveSplitTime();
+}
+
+void UpdateMainTimerText(){
+	if ((int)timer.ElapsedMilliseconds() % 2 == 0 || !timer.running)
+	{
+		e_totalTime.SetText(timer.DigitalFormat());
+	}
+}
+
+void UpdateSplitPositions(){
+	if(!splitsEnabled){
+		return;
+	}
+
+	for (int i = 0; i < splits.size(); i++)
+	{
+		splitTimeEntities[i].rect.x = window.dimensions.x - 60 - splitSize;
+	}
+}
+
+void UpdateLiveSplitTime(){
+	if(!timer.running && !(currentSplit<splits.size())){
+		return;
+	}
+
+	if(currentSplit < splits.size()){
+		splits[currentSplit].DigitalTime = timer.SplitDigitalFormat(splits[currentSplit - 1].mills);
+		splitTimeEntities[currentSplit].SetText(splits[currentSplit].DigitalTime);
+	}
+}
+
+void Render(){
+	window.Clear();
+	{
+		/* Draw the timer */
+		Birb::Render::DrawEntity(e_totalTime);
+
+		if (splitsEnabled)
+		{
+			/* Draw the divider line between main timer and splits */
+			Birb::Render::DrawRect(Birb::Colors::White, Birb::Rect(10, 12 + timerSize, window.dimensions.x - 20, 2));
+
+			/* Draw splits */
+			for (int i = 0; i < splits.size(); i++)
+			{
+				Birb::Render::DrawEntity(splitNameEntities[i]);
+				Birb::Render::DrawEntity(splitTimeEntities[i]);
+			}
+		}
+	}
+	window.Display();
 }
